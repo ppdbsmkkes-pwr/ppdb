@@ -25,6 +25,8 @@
         body { background-color: #f5f3ff; }
         .error-text { animation: fadeIn 0.2s ease; }
         @keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
+        /* Smooth scroll */
+        html { scroll-behavior: smooth; }
     </style>
 </head>
 <body>
@@ -32,12 +34,12 @@
 
 <script type="text/babel" data-presets="env,react">
     // =============================================
-    // FIREBASE KONFIGURASI (sesuai yang diberikan)
+    // FIREBASE KONFIGURASI (sesuai milik Anda)
     // =============================================
     import { initializeApp } from "firebase/app";
     import { getAnalytics } from "firebase/analytics";
     import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "firebase/auth";
-    import { getFirestore, collection, addDoc, getDocs, updateDoc, deleteDoc, doc, query, orderBy, getDoc } from "firebase/firestore";
+    import { getFirestore, collection, addDoc, getDocs, updateDoc, deleteDoc, doc, query, orderBy, getDoc, setDoc } from "firebase/firestore";
 
     const firebaseConfig = {
         apiKey: "AIzaSyA6E3J6EgHUuXJwtpda7dmJjUOvbR-pgjU",
@@ -56,8 +58,8 @@
     const provider = new GoogleAuthProvider();
     const db = getFirestore(app);
 
-    // Daftar email admin yang diizinkan (bisa diperluas via Firestore)
-    let ADMIN_EMAILS = ["admin@smkkesehatan.sch.id", "panitia@smkkesehatan.sch.id"];
+    // Daftar email admin yang diizinkan (default, bisa diperbarui via Firestore)
+    let ADMIN_EMAILS = ["admin@smkkesehatan.sch.id", "panitia@smkkesehatan.sch.id", "superadmin@gmail.com"];
     
     async function loadAdminEmails() {
         try {
@@ -66,7 +68,7 @@
                 const emails = adminDoc.data().emails || [];
                 if (emails.length) ADMIN_EMAILS = emails;
             }
-        } catch(e) { console.warn("Gunakan default admin emails"); }
+        } catch(e) { console.warn("Menggunakan default admin emails"); }
     }
     loadAdminEmails();
 
@@ -78,7 +80,7 @@
     }
 
     // =============================================
-    // KOMPONEN FORM PENDAFTARAN
+    // KOMPONEN FORM PENDAFTARAN (Lengkap)
     // =============================================
     const RegistrationForm = ({ onSuccess }) => {
         const [formData, setFormData] = React.useState({
@@ -122,7 +124,7 @@
         const handleSubmit = async (e) => {
             e.preventDefault();
             if (!validateForm()) {
-                const firstError = document.querySelector('.text-red-500');
+                const firstError = document.querySelector('.error-text');
                 if (firstError) firstError.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 return;
             }
@@ -155,7 +157,7 @@
                         <span>{opt}</span>
                     </label>
                 ))}
-                {errors[name] && <div className="text-red-500 text-sm mt-2">{errors[name]}</div>}
+                {errors[name] && <div className="text-red-500 text-sm mt-2 error-text">{errors[name]}</div>}
             </div>
         );
         
@@ -298,14 +300,16 @@
                 const snap = await getDocs(q);
                 const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 setSubmissions(data);
-            } catch(e) { console.error(e); alert("Gagal ambil data"); }
+            } catch(e) { console.error(e); alert("Gagal ambil data. Pastikan rules Firestore sudah benar."); }
             finally { setLoading(false); }
         };
         React.useEffect(() => { fetchData(); }, []);
         
         const updateStatus = async (id, newStatus) => {
-            await updateDoc(doc(db, "submissions", id), { status: newStatus });
-            fetchData();
+            try {
+                await updateDoc(doc(db, "submissions", id), { status: newStatus });
+                fetchData();
+            } catch(e) { alert("Gagal update status"); }
         };
         const deleteEntry = async (id) => {
             if (confirm("Yakin hapus data ini?")) { await deleteDoc(doc(db, "submissions", id)); fetchData(); }
@@ -426,5 +430,27 @@
     const root = ReactDOM.createRoot(document.getElementById('root'));
     root.render(<App />);
 </script>
+
+<!-- FIREBASE SECURITY RULES (Copy ke Firebase Console -> Firestore Rules) -->
+<!-- 
+rules_version = '11';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Data pendaftar: siapa pun bisa create, hanya admin bisa baca/tulis/edit
+    match /submissions/{document} {
+      allow create: if true;
+      allow read, write, update, delete: if request.auth != null && 
+        (request.auth.token.email in [ "admin@smkkesehatan.sch.id", "panitia@smkkesehatan.sch.id", "superadmin@gmail.com" ] ||
+         exists(/databases/$(database)/documents/config/admins) &&
+         request.auth.token.email in get(/databases/$(database)/documents/config/admins).data.emails);
+    }
+    // Konfigurasi admin (hanya superadmin yang bisa mengelola)
+    match /config/admins {
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.token.email == "superadmin@gmail.com";
+    }
+  }
+}
+-->
 </body>
 </html>
