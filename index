@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>SMK Kesehatan Purworejo - PPDB Online 2026</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Firebase SDKs (Modular) -->
+    <script type="importmap">
+        {
+            "imports": {
+                "firebase/app": "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js",
+                "firebase/auth": "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js",
+                "firebase/firestore": "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js",
+                "firebase/analytics": "https://www.gstatic.com/firebasejs/10.8.0/firebase-analytics.js"
+            }
+        }
+    </script>
+    <!-- React & ReactDOM -->
+    <script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.development.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.development.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@babel/standalone/babel.min.js"></script>
+    <style>
+        body { background-color: #f5f3ff; }
+        .error-text { animation: fadeIn 0.2s ease; }
+        @keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
+    </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="env,react">
+    // =============================================
+    // FIREBASE KONFIGURASI (sesuai yang diberikan)
+    // =============================================
+    import { initializeApp } from "firebase/app";
+    import { getAnalytics } from "firebase/analytics";
+    import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "firebase/auth";
+    import { getFirestore, collection, addDoc, getDocs, updateDoc, deleteDoc, doc, query, orderBy, getDoc } from "firebase/firestore";
+
+    const firebaseConfig = {
+        apiKey: "AIzaSyA6E3J6EgHUuXJwtpda7dmJjUOvbR-pgjU",
+        authDomain: "ppdb-smkkesehatanpwr.firebaseapp.com",
+        projectId: "ppdb-smkkesehatanpwr",
+        storageBucket: "ppdb-smkkesehatanpwr.firebasestorage.app",
+        messagingSenderId: "283130369531",
+        appId: "1:283130369531:web:57a3cace0efbe70013e75e",
+        measurementId: "G-465514R6J4"
+    };
+
+    // Initialize Firebase
+    const app = initializeApp(firebaseConfig);
+    const analytics = getAnalytics(app);
+    const auth = getAuth(app);
+    const provider = new GoogleAuthProvider();
+    const db = getFirestore(app);
+
+    // Daftar email admin yang diizinkan (bisa diperluas via Firestore)
+    let ADMIN_EMAILS = ["admin@smkkesehatan.sch.id", "panitia@smkkesehatan.sch.id"];
+    
+    async function loadAdminEmails() {
+        try {
+            const adminDoc = await getDoc(doc(db, "config", "admins"));
+            if (adminDoc.exists()) {
+                const emails = adminDoc.data().emails || [];
+                if (emails.length) ADMIN_EMAILS = emails;
+            }
+        } catch(e) { console.warn("Gunakan default admin emails"); }
+    }
+    loadAdminEmails();
+
+    // Helper: nomor registrasi unik
+    function generateRegNumber() {
+        const year = new Date().getFullYear();
+        const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+        return `REG-${year}-${random}`;
+    }
+
+    // =============================================
+    // KOMPONEN FORM PENDAFTARAN
+    // =============================================
+    const RegistrationForm = ({ onSuccess }) => {
+        const [formData, setFormData] = React.useState({
+            namaLengkap: '', noHp: '', jurusan: '', nisn: '', tempatLahir: '', tanggalLahir: '',
+            jenisKelamin: '', agama: '', tinggiBadan: '', beratBadan: '', riwayatPenyakit: '',
+            asalSmp: '', nilaiUjian: '', kip: '', boardingSchool: '', ekskulSmp: '', ekskulSmk: [],
+            sumberInfo: [], sumberInfoLainnya: '', motivasi: '',
+            namaAyah: '', noHpAyah: '', pekerjaanAyah: '', penghasilanAyah: '',
+            namaIbu: '', noHpIbu: '', pekerjaanIbu: '', penghasilanIbu: '',
+            namaWali: '', noHpWali: '', pekerjaanWali: '', penghasilanWali: '', hubunganWali: ''
+        });
+        const [errors, setErrors] = React.useState({});
+        const [loading, setLoading] = React.useState(false);
+        
+        const ekskulOptions = ['Musik Band', 'Marching Band', 'Paduan Suara', 'Seni Tari', 'Voli', 'Futsal', 'Basket', 'Karya Ilmiah', 'Multimedia', 'Pencak Silat', 'Taekwondo', 'Pecinta Alam', 'PKS', 'Paskib', 'Hadroh'];
+        const infoOptions = ['Media Sosial', 'Sosialisasi', 'Alumni', 'Teman', 'Guru/ Karyawan SMK Kesehatan Purworejo', 'Banner / Leaflet / Brosur'];
+        
+        const handleChange = (e) => {
+            const { name, value } = e.target;
+            setFormData(prev => ({ ...prev, [name]: value }));
+            if (errors[name]) setErrors(prev => ({ ...prev, [name]: '' }));
+        };
+        const handleCheckboxChange = (e, fieldName) => {
+            const { value, checked } = e.target;
+            setFormData(prev => {
+                const current = [...prev[fieldName]];
+                if (checked) return { ...prev, [fieldName]: [...current, value] };
+                else return { ...prev, [fieldName]: current.filter(v => v !== value) };
+            });
+        };
+        const validateForm = () => {
+            const newErrors = {};
+            const required = ['namaLengkap','noHp','jurusan','nisn','tempatLahir','tanggalLahir','jenisKelamin','agama','tinggiBadan','beratBadan','riwayatPenyakit','asalSmp','nilaiUjian','kip','boardingSchool','ekskulSmp','motivasi','namaAyah','noHpAyah','pekerjaanAyah','penghasilanAyah','namaIbu','noHpIbu','pekerjaanIbu','penghasilanIbu'];
+            required.forEach(f => { if (!formData[f]) newErrors[f] = 'Wajib diisi'; });
+            if (formData.ekskulSmk.length === 0) newErrors.ekskulSmk = 'Pilih minimal satu ekstrakurikuler';
+            if (formData.sumberInfo.length === 0 && !formData.sumberInfoLainnya) newErrors.sumberInfo = 'Pilih minimal satu sumber informasi';
+            setErrors(newErrors);
+            return Object.keys(newErrors).length === 0;
+        };
+        
+        const handleSubmit = async (e) => {
+            e.preventDefault();
+            if (!validateForm()) {
+                const firstError = document.querySelector('.text-red-500');
+                if (firstError) firstError.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                return;
+            }
+            setLoading(true);
+            try {
+                const regNumber = generateRegNumber();
+                const submissionData = { ...formData, registrationNumber: regNumber, status: 'baru', createdAt: new Date().toISOString() };
+                await addDoc(collection(db, "submissions"), submissionData);
+                onSuccess(regNumber);
+            } catch (err) {
+                console.error(err);
+                alert("Gagal menyimpan data. Pastikan koneksi internet dan konfigurasi Firebase benar.");
+            } finally { setLoading(false); }
+        };
+        
+        const InputField = ({ label, name, type = 'text', required, placeholder = "Jawaban Anda", helperText }) => (
+            <div className="mb-6 bg-white p-6 rounded-lg border shadow-sm">
+                <label className="block text-gray-800 font-medium mb-2">{label} {required && <span className="text-red-500">*</span>}</label>
+                {helperText && <p className="text-sm text-gray-500 mb-3">{helperText}</p>}
+                <input type={type} name={name} value={formData[name]} onChange={handleChange} placeholder={placeholder} className="w-full border-b border-gray-300 focus:border-red-500 outline-none py-2" />
+                {errors[name] && <div className="flex items-center gap-2 mt-2 text-red-500 text-sm error-text"><span>⚠️</span>{errors[name]}</div>}
+            </div>
+        );
+        const RadioGroup = ({ label, name, options, required }) => (
+            <div className="mb-6 bg-white p-6 rounded-lg border shadow-sm">
+                <label className="block text-gray-800 font-medium mb-4">{label} {required && <span className="text-red-500">*</span>}</label>
+                {options.map(opt => (
+                    <label key={opt} className="flex items-center gap-3 mb-2 cursor-pointer">
+                        <input type="radio" name={name} value={opt} checked={formData[name] === opt} onChange={handleChange} className="w-5 h-5 text-red-500" />
+                        <span>{opt}</span>
+                    </label>
+                ))}
+                {errors[name] && <div className="text-red-500 text-sm mt-2">{errors[name]}</div>}
+            </div>
+        );
+        
+        return (
+            <form onSubmit={handleSubmit} className="max-w-3xl mx-auto space-y-4 pb-12">
+                <div className="bg-white p-6 rounded-lg border-t-8 border-red-500 shadow-md">
+                    <h1 className="text-3xl font-normal mb-2">Formulir Pendaftaran Siswa Baru<br/>SMK Kesehatan Purworejo TP 2026/2027</h1>
+                    <div className="text-sm text-gray-600 space-y-3 my-4">
+                        <p>Periode: Januari - Juli 2026. Tes tertulis, kesehatan & wawancara satu hari.</p>
+                        <p className="font-semibold">📌 Persyaratan: fotocopy raport/Ijazah, NISN, KK, pas foto 3x4, KIP (jika ada), akta kelahiran.</p>
+                    </div>
+                    <p className="text-red-500 text-sm">* Wajib diisi</p>
+                </div>
+                <InputField label="Nama Lengkap" name="namaLengkap" required />
+                <InputField label="No HP (Whatsapp)" name="noHp" type="tel" required />
+                <RadioGroup label="Jurusan Yang Diminati" name="jurusan" options={['Keperawatan','Farmasi']} required />
+                <InputField label="NISN" name="nisn" required />
+                <InputField label="Tempat Lahir" name="tempatLahir" required />
+                <InputField label="Tanggal Lahir" name="tanggalLahir" type="date" required />
+                <RadioGroup label="Jenis Kelamin" name="jenisKelamin" options={['Perempuan','Laki-laki']} required />
+                <InputField label="Agama" name="agama" required />
+                <InputField label="Tinggi Badan" name="tinggiBadan" placeholder="160 cm" required />
+                <InputField label="Berat Badan" name="beratBadan" placeholder="50 kg" required />
+                <InputField label="Riwayat Penyakit" name="riwayatPenyakit" required />
+                <InputField label="Asal SMP / MTs" name="asalSmp" required />
+                <InputField label="Rata-rata Nilai Ujian SMP" name="nilaiUjian" helperText="Nilai rata-rata rapor semester 4/5" required />
+                <RadioGroup label="Memiliki KIP" name="kip" options={['Ya','Tidak']} required />
+                <RadioGroup label="Program Boarding School (Pondok)" name="boardingSchool" options={['Ya','Tidak']} required />
+                <InputField label="Ekstrakurikuler yang pernah diikuti" name="ekskulSmp" required />
+                <div className="bg-white p-6 rounded-lg border shadow-sm">
+                    <label className="block font-medium mb-4">Ekstrakurikuler yang diminati di SMK <span className="text-red-500">*</span></label>
+                    <div className="grid grid-cols-2 gap-2">
+                        {ekskulOptions.map(opt => (
+                            <label key={opt} className="flex items-center gap-2"><input type="checkbox" value={opt} checked={formData.ekskulSmk.includes(opt)} onChange={(e) => handleCheckboxChange(e, 'ekskulSmk')} className="w-4 h-4" /> {opt}</label>
+                        ))}
+                    </div>
+                    {errors.ekskulSmk && <div className="text-red-500 text-sm mt-2 error-text">{errors.ekskulSmk}</div>}
+                </div>
+                <div className="bg-white p-6 rounded-lg border shadow-sm">
+                    <label className="block font-medium mb-4">Sumber Informasi SMK Kesehatan Purworejo <span className="text-red-500">*</span></label>
+                    {infoOptions.map(opt => (
+                        <label key={opt} className="flex items-center gap-2 mb-2"><input type="checkbox" value={opt} checked={formData.sumberInfo.includes(opt)} onChange={(e) => handleCheckboxChange(e, 'sumberInfo')} /> {opt}</label>
+                    ))}
+                    <div className="flex items-center gap-3 mt-2">
+                        <label className="flex items-center gap-2"><input type="checkbox" value="Yang lain" checked={formData.sumberInfo.includes('Yang lain')} onChange={(e) => handleCheckboxChange(e, 'sumberInfo')} /> Yang lain:</label>
+                        <input type="text" name="sumberInfoLainnya" value={formData.sumberInfoLainnya} onChange={handleChange} disabled={!formData.sumberInfo.includes('Yang lain')} className="border-b flex-1 p-1" />
+                    </div>
+                    {errors.sumberInfo && <div className="text-red-500 text-sm mt-2 error-text">{errors.sumberInfo}</div>}
+                </div>
+                <InputField label="Motivasi mendaftar di SMK Kesehatan Purworejo" name="motivasi" required />
+                <div className="bg-red-50 p-4 rounded-lg text-sm">Data Orang Tua/Wali wajib diisi walau tidak tinggal bersama. Wali opsional.</div>
+                <h3 className="text-xl font-semibold px-2">Data Ayah</h3>
+                <InputField label="Nama Ayah" name="namaAyah" required /><InputField label="No HP Ayah" name="noHpAyah" required /><InputField label="Pekerjaan Ayah" name="pekerjaanAyah" required /><InputField label="Penghasilan Ayah" name="penghasilanAyah" required />
+                <h3 className="text-xl font-semibold px-2">Data Ibu</h3>
+                <InputField label="Nama Ibu" name="namaIbu" required /><InputField label="No HP Ibu" name="noHpIbu" required /><InputField label="Pekerjaan Ibu" name="pekerjaanIbu" required /><InputField label="Penghasilan Ibu" name="penghasilanIbu" required />
+                <h3 className="text-xl font-semibold px-2">Data Wali (Opsional)</h3>
+                <InputField label="Nama Wali" name="namaWali" helperText="Diisi jika tidak tinggal dengan orang tua" /><InputField label="No HP Wali" name="noHpWali" /><InputField label="Pekerjaan Wali" name="pekerjaanWali" /><InputField label="Penghasilan Wali" name="penghasilanWali" /><InputField label="Hubungan dengan wali" name="hubunganWali" placeholder="Paman, Kakek" />
+                
+                <div className="flex justify-between mt-6">
+                    <button type="button" onClick={() => window.location.reload()} className="text-red-500 hover:bg-red-50 px-4 py-2 rounded">Kosongkan formulir</button>
+                    <button type="submit" disabled={loading} className="bg-red-600 hover:bg-red-700 text-white font-medium px-8 py-2 rounded-md shadow">{loading ? "Menyimpan..." : "Kirim Pendaftaran"}</button>
+                </div>
+            </form>
+        );
+    };
+    
+    // =============================================
+    // HALAMAN TERIMA KASIH + BENEFIT
+    // =============================================
+    const ThankYouPage = ({ regId, onReset }) => {
+        return (
+            <div className="min-h-screen bg-purple-50 flex items-center justify-center p-4">
+                <div className="max-w-2xl bg-white rounded-xl shadow-lg p-8 text-center">
+                    <div className="text-green-500 text-6xl mb-4">✓</div>
+                    <h2 className="text-2xl font-bold">Pendaftaran Berhasil!</h2>
+                    <p className="text-gray-600 mt-2">Nomor Registrasi: <strong className="text-red-600">{regId}</strong></p>
+                    <div className="bg-blue-50 p-5 rounded-lg my-6 text-left">
+                        <h3 className="font-bold text-lg mb-3">🎉 Yang Anda Dapatkan Setelah Mendaftar:</h3>
+                        <ul className="space-y-2">
+                            <li>📄 <strong>Kartu Peserta Ujian (PDF)</strong> - unduh dari email/WA (akan dikirim panitia)</li>
+                            <li>💬 Akses grup WhatsApp panitia untuk info jadwal tes & wawancara</li>
+                            <li>📘 E-book panduan persiapan tes seleksi (gratis)</li>
+                            <li>💰 Voucher potongan biaya seragam Rp 200.000 (khusus pendaftar awal)</li>
+                            <li>🏠 Prioritas tempat di Boarding School (jika memilih "Ya")</li>
+                            <li>✅ Notifikasi jadwal tes via WhatsApp (akan dihubungi panitia)</li>
+                        </ul>
+                        <p className="mt-3 text-sm italic">Simpan nomor registrasi untuk keperluan selanjutnya.</p>
+                    </div>
+                    <button onClick={onReset} className="bg-red-500 text-white px-5 py-2 rounded-md">Daftar Siswa Baru Lainnya</button>
+                </div>
+            </div>
+        );
+    };
+    
+    // =============================================
+    // ADMIN LOGIN (Google)
+    // =============================================
+    const AdminLogin = ({ onLoginSuccess }) => {
+        const [loadingAuth, setLoadingAuth] = React.useState(false);
+        const handleGoogleLogin = async () => {
+            setLoadingAuth(true);
+            try {
+                const result = await signInWithPopup(auth, provider);
+                const user = result.user;
+                const email = user.email;
+                if (ADMIN_EMAILS.includes(email)) {
+                    onLoginSuccess(user);
+                } else {
+                    alert("Akses ditolak. Email Anda tidak terdaftar sebagai admin.");
+                    await signOut(auth);
+                }
+            } catch(err) { console.error(err); alert("Login gagal"); }
+            finally { setLoadingAuth(false); }
+        };
+        return (
+            <div className="flex items-center justify-center min-h-[60vh]">
+                <div className="bg-white p-8 rounded-xl shadow-md text-center">
+                    <h2 className="text-2xl font-bold mb-4">Panel Admin PPDB</h2>
+                    <p className="mb-6 text-gray-600">Silakan login dengan akun Google yang telah terdaftar sebagai admin.</p>
+                    <button onClick={handleGoogleLogin} disabled={loadingAuth} className="bg-red-600 text-white px-6 py-2 rounded-lg flex items-center gap-2 mx-auto">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" /><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+                        {loadingAuth ? "Memproses..." : "Masuk dengan Google"}
+                    </button>
+                </div>
+            </div>
+        );
+    };
+    
+    // =============================================
+    // ADMIN DASHBOARD (Manajemen pendaftar)
+    // =============================================
+    const AdminDashboard = ({ user, onLogout }) => {
+        const [submissions, setSubmissions] = React.useState([]);
+        const [filter, setFilter] = React.useState("");
+        const [loading, setLoading] = React.useState(true);
+        const fetchData = async () => {
+            setLoading(true);
+            try {
+                const q = query(collection(db, "submissions"), orderBy("createdAt", "desc"));
+                const snap = await getDocs(q);
+                const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                setSubmissions(data);
+            } catch(e) { console.error(e); alert("Gagal ambil data"); }
+            finally { setLoading(false); }
+        };
+        React.useEffect(() => { fetchData(); }, []);
+        
+        const updateStatus = async (id, newStatus) => {
+            await updateDoc(doc(db, "submissions", id), { status: newStatus });
+            fetchData();
+        };
+        const deleteEntry = async (id) => {
+            if (confirm("Yakin hapus data ini?")) { await deleteDoc(doc(db, "submissions", id)); fetchData(); }
+        };
+        const exportCSV = () => {
+            const headers = ["Nama Lengkap", "NISN", "Jurusan", "Status", "No HP", "Asal SMP", "Boarding", "Tanggal Daftar", "Nomor Registrasi"];
+            const rows = submissions.map(s => [s.namaLengkap, s.nisn, s.jurusan, s.status, s.noHp, s.asalSmp, s.boardingSchool, s.createdAt, s.registrationNumber]);
+            const csvContent = [headers, ...rows].map(row => row.map(cell => `"${cell || ''}"`).join(",")).join("\n");
+            const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+            const link = document.createElement("a");
+            link.href = URL.createObjectURL(blob);
+            link.download = `pendaftar_smk_${new Date().toISOString().slice(0,19)}.csv`;
+            link.click();
+        };
+        
+        const filtered = submissions.filter(s => s.namaLengkap?.toLowerCase().includes(filter.toLowerCase()) || s.nisn?.includes(filter));
+        
+        return (
+            <div className="p-6 max-w-7xl mx-auto">
+                <div className="flex justify-between items-center mb-6 flex-wrap gap-3">
+                    <h1 className="text-2xl font-bold">Dashboard Admin PPDB</h1>
+                    <div className="flex gap-3 items-center">
+                        <span className="text-sm text-gray-600">{user?.email}</span>
+                        <button onClick={onLogout} className="bg-gray-200 px-3 py-1 rounded hover:bg-gray-300">Logout</button>
+                    </div>
+                </div>
+                <div className="flex flex-wrap gap-4 mb-6">
+                    <input type="text" placeholder="Cari nama / NISN" value={filter} onChange={e=>setFilter(e.target.value)} className="border p-2 rounded w-64" />
+                    <button onClick={exportCSV} className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">📎 Export CSV</button>
+                    <button onClick={fetchData} className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">🔄 Refresh</button>
+                </div>
+                {loading ? <p>Memuat data...</p> : (
+                    <div className="overflow-x-auto bg-white rounded shadow">
+                        <table className="min-w-full border">
+                            <thead className="bg-gray-100">
+                                <tr><th className="p-2 border">Nama</th><th className="p-2 border">NISN</th><th className="p-2 border">Jurusan</th><th className="p-2 border">Status</th><th className="p-2 border">Registrasi</th><th className="p-2 border">Aksi</th></tr>
+                            </thead>
+                            <tbody>
+                                {filtered.map(sub => (
+                                    <tr key={sub.id} className="border-b hover:bg-gray-50">
+                                        <td className="p-2">{sub.namaLengkap}</td>
+                                        <td className="p-2">{sub.nisn}</td>
+                                        <td className="p-2">{sub.jurusan}</td>
+                                        <td className="p-2">
+                                            <select value={sub.status || "baru"} onChange={e=>updateStatus(sub.id, e.target.value)} className="border rounded p-1">
+                                                <option>baru</option><option>diproses</option><option>lulus seleksi</option><option>tidak lulus</option><option>daftar ulang</option>
+                                            </select>
+                                        </td>
+                                        <td className="p-2 text-xs">{sub.registrationNumber || '-'}</td>
+                                        <td className="p-2"><button onClick={()=>deleteEntry(sub.id)} className="text-red-600 hover:underline">Hapus</button></td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                        {filtered.length === 0 && <p className="p-4 text-center">Tidak ada data pendaftar</p>}
+                    </div>
+                )}
+            </div>
+        );
+    };
+    
+    // =============================================
+    // MAIN APP COMPONENT (Routing sederhana)
+    // =============================================
+    const App = () => {
+        const [currentRegId, setCurrentRegId] = React.useState(null);
+        const [adminUser, setAdminUser] = React.useState(null);
+        const [isAdmin, setIsAdmin] = React.useState(false);
+        const [view, setView] = React.useState('form');
+        
+        React.useEffect(() => {
+            const unsub = onAuthStateChanged(auth, async (user) => {
+                if (user && ADMIN_EMAILS.includes(user.email)) {
+                    setAdminUser(user);
+                    setIsAdmin(true);
+                    if (view !== 'adminPanel') setView('adminPanel');
+                } else {
+                    if (user && !ADMIN_EMAILS.includes(user.email)) await signOut(auth);
+                    setAdminUser(null);
+                    setIsAdmin(false);
+                    if (view === 'adminPanel') setView('form');
+                }
+            });
+            return () => unsub();
+        }, []);
+        
+        const handleRegistrationSuccess = (regNumber) => {
+            setCurrentRegId(regNumber);
+            setView('thankYou');
+            window.scrollTo(0,0);
+        };
+        const resetToForm = () => { setView('form'); setCurrentRegId(null); };
+        
+        const Navbar = () => (
+            <div className="bg-white shadow-md p-3 flex justify-between items-center px-6 flex-wrap gap-3">
+                <h1 className="text-red-600 font-bold text-xl">SMK Kesehatan Purworejo</h1>
+                <div>
+                    {isAdmin && <button onClick={() => setView('adminPanel')} className="bg-red-500 text-white px-4 py-1 rounded mr-2">Dashboard Admin</button>}
+                    {view !== 'form' && !isAdmin && <button onClick={resetToForm} className="text-blue-600 border px-3 py-1 rounded">← Form Pendaftaran</button>}
+                    {isAdmin && view === 'adminPanel' && <button onClick={resetToForm} className="text-gray-600 border px-3 py-1 rounded">Halaman Publik</button>}
+                </div>
+            </div>
+        );
+        
+        if (view === 'thankYou') return <><Navbar/><ThankYouPage regId={currentRegId} onReset={resetToForm} /></>;
+        if (view === 'adminPanel' && isAdmin) return <><Navbar/><AdminDashboard user={adminUser} onLogout={async()=>{ await signOut(auth); setView('form'); }} /></>;
+        if (view === 'adminPanel' && !isAdmin) return <><Navbar/><AdminLogin onLoginSuccess={(user)=>{ setAdminUser(user); setIsAdmin(true); setView('adminPanel'); }} /></>;
+        
+        return (
+            <>
+                <Navbar/>
+                <RegistrationForm onSuccess={handleRegistrationSuccess} />
+                <div className="text-center text-xs text-gray-500 py-6 border-t mt-8">SMK Kesehatan Purworejo - PPDB Online 2026 | Powered by Firebase</div>
+            </>
+        );
+    };
+    
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+</body>
+</html>
